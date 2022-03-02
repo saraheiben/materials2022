@@ -1,0 +1,16 @@
+---
+title: "Assignment_w1"
+author: "Sarah Eiben"
+date: '2022-03-02'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(epiwraps)
+sessionInfo()
+```
+
