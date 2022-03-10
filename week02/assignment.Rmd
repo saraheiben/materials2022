@@ -1,0 +1,102 @@
+---
+title: "assignment week 2"
+author: "Sarah Eiben"
+date: '2022-03-08'
+output: html_document
+---
+
+##Assignment week 2
+
+```{r}
+suppressPackageStartupMessages({
+  library(AnnotationHub)
+  library(ensembldb)
+  library(GenomicRanges)
+  library(epiwraps)
+})
+```
+
+#Find and download mouse Ensdb object (Mus Musculus), version 102, genome build GRCm38
+
+```{r}
+ah <- AnnotationHub()
+#display(ah)
+# found out that it is the 'AH89211'
+# before letting the next command act, you need to close the ongoing display process
+ensdb <- ah[["AH89211"]]
+# downloads this annotation package
+ensdb
+```
+
+#Find and download mouse genome sequence (dna_sm = soft-masked genomic DNA) in TwoBit/2bit format for GRCm38
+
+
+```{r}
+#display(ah)
+# found out that it is the 'AH88477'
+TwoBitFile_msm <- ah[["AH88477"]]
+# downloads this annotation package
+TwoBitFile_msm
+```
+
+#Find and download drosophila melanogaster genome sequence ( dna_sm ) in TwoBit/2bit format for BDGP6
+
+```{r, eval=FALSE}
+display(ah)
+# found out that it is the 'AH99424'
+TwoBitFile_dsm <- ah[["AH99424"]]
+# downloads this annotation package
+TwoBitFile_dsm
+```
+
+##Using the mouse EnsDb object (here 'ensdb'):
+#Find: How many different ensembl gene IDs and gene symbols there are for protein-coding genes:
+
+```{r}
+# get familiar with the database
+listTables(ensdb)
+# See what filters are supported, can be used
+supportedFilters()
+# What we are interested in is the gene_biotype, so 'GeneBiotypeFilter'
+```
+
+```{r}
+# Filter only the protein_coding genes from the original database
+ensdb_pc <- genes(ensdb, filter = GeneBiotypeFilter("protein_coding"), columns = c("gene_id", "symbol"))
+
+# get the number of different IDs from this filter (´unique´ doesn´t show doubles)
+length(unique(ensdb_pc$gene_id))
+
+# get the number of different gene symbols
+length(unique(ensdb_pc$symbol))
+```
+
+Gives us an output of 22287 gene IDs and 21964 gene symbols.
+
+#Plot the distribution (histogram) of how many exons each protein-coding gene has:
+
+```{r}
+
+# look at exons with ´exonsBy´
+# Find how many exons each protein coding gene has
+# The by tells you whether exons should be fetched by transcript or by gene (in TranscriptsBy it tells you whether to fetch by genes or by exons)
+exsPerGene <- exonsBy(ensdb, by = "gene", filter = GeneBiotypeFilter("protein_coding"))
+exsPerGene
+
+# Plot this in a histogram, therefore having to count the lengths of the exons per gene
+nbExonsPerGene <- lengths(exsPerGene)
+hist(nbExonsPerGene)
+```
+
+#Plot the distribution of the (spliced) length of protein-coding transcripts:
+```{r}
+# We´re now working with transcripts, not genes, so we use tx instead of gene
+exsPerTranscript <- exonsBy(ensdb, by = "tx", filter = GeneBiotypeFilter("protein_coding"))
+# This gives you the widths of the different exons of the transcripts
+width(exsPerTranscript)
+# We need the sum of all the exons for one transcript
+length_exons <- sum(width(exsPerTranscript))
+hist(length_exons)
+```
+
+Estimated time for assignment completion: 6 hours
