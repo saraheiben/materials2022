@@ -1,0 +1,216 @@
+---
+title: "assignment"
+author: "Sarah Eiben"
+date: '2022-03-12'
+output: html_document
+---
+
+Questions:
+Where do directories we create automatically get saved? In the place you save the file? Why is it not shown in the "files" tab on the right?
+Why do we have to save the things from ENCODE with .gz in the end and not just e.g. .bed?
+Can you move/copy files in your folders for them to be accessible by a new Markdown document?
+What exactly are seqlevels?
+When do we have to use the double colon?
+
+```{r}
+suppressPackageStartupMessages({
+  library(AnnotationHub)
+  library(Rsubread)
+  library(rtracklayer)
+  library(Biostrings)
+  library(Rfastp)
+  library(epiwraps)
+})
+ah <- AnnotationHub()
+ensdb <- ah[["AH89211"]]
+```
+
+## Downloading the raw reads
+
+```{r, eval=FALSE}
+dir.create("raw")
+download.file("https://www.encodeproject.org/files/ENCFF001LJN/@@download/ENCFF001LJN.fastq.gz", dest="raw/Mouse.fastq.gz" )
+```
+
+
+## Trimming with Rfastp
+
+```{r}
+dir.create("rfastp.trimmed")
+#The first "" is the input file names, then outputFastq is the string of path for the output
+qc <- Rfastp::rfastp("raw/Mouse.fastq.gz", outputFastq="rfastp.trimmed/Mouse",                maxNfilter=0, thread=4, overrepresentationAnalysis=TRUE)
+```
+The filtering result can be seen in the output (number and percentage of mapped reads).
+
+## Generate the qc plot inside the markdown
+
+```{r, eval=FALSE}
+Rfastp::curvePlot(qc, curve="content_curves")
+```
+## Just for me to see what this one puts out
+
+```{r, eval=FALSE}
+Rfastp::curvePlot(qc, curve="quality_curves")
+```
+
+# Alignment (Using Rsubread)
+
+Before we can do peak analysis we have to align the reads.
+
+## First we have to build a genome index for mapping
+
+```{r, eval=FALSE}
+# we get the genome sequence from AnnotationHub
+genome <- ah[["AH88477"]]
+# we create a new directory that will contain the genome index
+dir.create("mouse_genome")
+# we write the genome sequence in fasta format
+export(import.2bit(genome), "mouse_genome/genome.fasta.gz", compress=TRUE)
+# we build a Rsubread index
+Rsubread::buildindex("mouse_genome/rsubread", reference="mouse_genome/genome.fasta.gz", gappedIndex=TRUE, indexSplit=TRUE)
+```
+## Now we can align our reads to this genome
+
+```{r, eval=FALSE}
+dir.create("aligned")
+#specify the index, specify if either dna or cdna, specify the output and the input file (use trimmed one for input), specify number of threads used for this
+align.stats <- Rsubread::align(index="mouse_genome/rsubread", type="dna", output_file="aligned/Mouse.bam", readfile1="rfastp.trimmed/Mouse_R1.fastq.gz", 
+nthreads=4, sortReadsByCoordinates=TRUE)
+align.stats
+```
+## Peak calling
+Identify which parts are peaks. 
+
+```{r}
+library(epiwraps)
+#works nicely for clear peaks but is critical for borderline peaks
+peaks <- callPeaks("aligned/Mouse.bam")
+# if we want to save it as a bed file:
+#rtracklayer::export.bed(peaks, "peaks/peaks.bed")
+peaks
+sum(table(peaks))
+```
+We find 26048 peaks.
+
+
+# Bam to bigwig
+
+Generating coverage tracks (only gives an invisible file as output)
+
+
+```{r, eval=FALSE}
+library(epiwraps)
+dir.create("tracks")
+#binWidth=10 --> less detailed, makes large files easier to be analyzed
+#the binwidth just changes the resolution (bigger values mean coarser signal, but small file sizes), extend=50 is because in that experiment the fragments were 50-100bp, scaling=TRUE (which is the default) is to make signals more comparable across experiments, so it's not very important when you're dealing with just one file. But I do it systematically because you might decide to compare things later on... 
+bam2bw("aligned/Mouse.bam", "tracks/Mouse_full.bw", binWidth=10, extend=100, scaling=TRUE)
+```
+
+
+
+# Looking at an example peak
+
+```{r, eval=FALSE}
+#If it's coordinates of a region, it can either be a string of the format seqname:start-end (e.g. "chr2:10000:10500"), or a GRanges of length one. This means, for example, that if you have a peaks object that contains your peaks, you could visualize them one by one by giving region=peaks[1] (and  region=peaks[2] for the second, etc)
+plotSignalTracks(list(bigwig="tracks/Mouse_full.bw", bam="aligned/Mouse.bam", peaks=peaks), region=peaks[1], extend=500)
+```
+
+```{r, eval=FALSE}
+plotSignalTracks(list(bigwig="tracks/Mouse_full.bw", bam="aligned/Mouse.bam", peaks=peaks), region="hprt", ensdb = ensdb, extend=1000)
+```
+
+
+```{r}
+sessionInfo()
+```
+
+Estimated time for assignment completion: 7 hours
+
+---
+title: "assignment week 5"
+author: "Sarah Eiben"
+date: '2022-03-24'
+output: html_document
+---
+
+# Download the peaklevel-data from ENCODE
+
+The following order: H3K4me3, H3K4me1, H3K27ac, and H3K27me3
+
+```{r}
+dir.create("encode")
+#have to copy the download link on the ENCODE site!
+download.file(url =  "https://www.encodeproject.org/files/ENCFF244SBF/@@download/ENCFF244SBF.bed.gz", dest="encode/H3K4me3.bed.gz")
+download.file(url="https://www.encodeproject.org/files/ENCFF284QUZ/@@download/ENCFF284QUZ.bed.gz", dest="encode/H3K4me1.bed.gz")
+download.file(url="https://www.encodeproject.org/files/ENCFF587LEB/@@download/ENCFF587LEB.bed.gz", dest="encode/H3K27ac.bed.gz")
+download.file(url="https://www.encodeproject.org/files/ENCFF423ZVR/@@download/ENCFF423ZVR.bed.gz", dest="encode/H3K27me3.bed.gz")
+```
+### Try to plot all regions around the strongest peaks
+```{r}
+#look at how many peaks there are
+length(peaks)
+head(peaks)
+#My peaks for some reason doesn't have the qValue?
+strong_peaks <- peaks[peaks$score>median(peaks$score)]
+#extend shows you a little more area around the peak, the resolution is 20, specify the regions you want to analyse
+peakSignals <- signal2Matrix("tracks/Mouse_full.bw", regions=strong_peaks, extend=2000, w=20)
+class(peakSignals[[1]])
+#the data itself is a big matrix, let's look at it
+peakSignals[[1]][1:5, 1:5]
+plotEnrichedHeatmaps(peakSignals, raster_by_magick=FALSE)
+```
+
+# Of the p300 peaks what proportion overlap each of the marks?
+
+## Start with H3K4me3
+
+```{r}
+h3k4me3 <- rtracklayer::import("C:/Users/Sarah.HOME/OneDrive/ETH/Master/Neuro FS22/Bioinformatic approaches to regulatory genomics/Assignments/Week 3/encode/H3K4me3.bed.gz", format = "narrowPeak")
+#We need to specify that it is a narrowPeak format because otherwhise it assumes differently
+#This gives me an error saying there are no sequence levels in common, so I have to rename the sequence levels for it to work.
+#sub and gsub perform replacement of the first and all matches respectively.
+h3k4me3 <- renameSeqlevels(x = h3k4me3, levels(gsub("chr", "", seqnames(h3k4me3))))
+p300h3k4me3 <- overlapsAny(peaks, h3k4me3)
+#just ignore the warning it gives you
+#The output is a logical vector with the length of the number of peaks
+#you can ask the other way around and then get a logical vector with the length of the number of h3k4me3
+#to calculate what proportion overlaps each of the marks
+sum(p300h3k4me3)/length(p300h3k4me3)
+```
+Overlap: 0.459
+
+## H3K4me1
+
+```{r}
+h3k4me1 <- rtracklayer::import("C:/Users/Sarah.HOME/OneDrive/ETH/Master/Neuro FS22/Bioinformatic approaches to regulatory genomics/Assignments/Week 3/encode/H3K4me1.bed.gz", format = "narrowPeak")
+h3k4me1 <- renameSeqlevels(x = h3k4me1, levels(gsub("chr", "", seqnames(h3k4me1))))
+p300h3k4me1 <- overlapsAny(peaks, h3k4me1)
+sum(p300h3k4me1)/length(p300h3k4me1)
+```
+
+Overlap: 0.177
+
+
+## H3K27ac
+
+```{r}
+h3k27ac <- rtracklayer::import("C:/Users/Sarah.HOME/OneDrive/ETH/Master/Neuro FS22/Bioinformatic approaches to regulatory genomics/Assignments/Week 3/encode/H3K27ac.bed.gz", format = "narrowPeak")
+h3k27ac <- renameSeqlevels(x = h3k27ac, levels(gsub("chr", "", seqnames(h3k27ac))))
+p300h3k27ac <- overlapsAny(peaks, h3k27ac)
+sum(p300h3k27ac)/length(p300h3k27ac)
+```
+
+Overlap: 0.486
+
+## H3K27me3
+
+```{r}
+h3k27me3 <- rtracklayer::import("C:/Users/Sarah.HOME/OneDrive/ETH/Master/Neuro FS22/Bioinformatic approaches to regulatory genomics/Assignments/Week 3/encode/H3K27me3.bed.gz", format = "narrowPeak")
+h3k27me3 <- renameSeqlevels(x = h3k27me3, levels(gsub("chr", "", seqnames(h3k27me3))))
+p300h3k27me3 <- overlapsAny(peaks, h3k27me3)
+sum(p300h3k27me3)/length(p300h3k27me3)
+```
+
+Overlap: 0.111
+
+Estimated time for assignment completion: 2.5 hours 
