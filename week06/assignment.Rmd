@@ -1,0 +1,139 @@
+---
+title: "Assignment Week 6"
+author: "Sarah Eiben"
+date: '2022-04-06'
+output: html_document
+---
+
+Question: How do I pick one peak file from encode? I sometimes struggle with finding an optimal one.
+What exactly does the wrapper function do?
+
+
+```{r}
+suppressPackageStartupMessages({
+  library(GenomicRanges)
+  library(memes)
+  library(Biostrings)
+  library(AnnotationHub)
+  library(MotifDb)
+  library(universalmotif)
+  library(PWMEnrich)
+  library(ggplot2)
+})
+
+ah <- AnnotationHub()
+```
+
+# Choosing the transcription factor GATA1 in mice and downloading the peaks from the G1E cell line
+
+We are also preparing the peaks for usage.
+
+```{r}
+dir.create("peaks")
+download.file("https://www.encodeproject.org/files/ENCFF045RXZ/@@download/ENCFF045RXZ.bed.gz", "peaks/GATA1_G1E.bed.gz")
+peaks <- rtracklayer::import("peaks/GATA1_G1E.bed.gz", format = "NarrowPeak")
+seqlevelsStyle(peaks) <- "Ensembl"
+```
+
+## We are using the centers of the peaks so it doesn't run as long
+
+```{r}
+peak_centers <- resize(peaks, fix="center", width=100)
+# Two bit file of Genome sequence of Mus Musculus GRCm38
+# needs to be two bit file for meme
+genome <- ah[["AH88477"]]
+peak_seqs <- memes::get_sequence(peak_centers, genome)
+peak_seqs
+# see if there is a difference if we use the whole peaks
+# peak_seqs_full <- memes::get_sequence(peaks, genome)
+# peak_seqs_full
+# here we get the same result as if we use only the peak centers.
+```
+
+# Motif scanning
+
+Motif scanning aims at finding the _occurrences_ of a known motif in a set of sequences.
+
+## Getting the desired motif (in our case this is GATA1)
+
+```{r}
+# we search for "GATA1" in the motif database
+motifs <- query(MotifDb, "GATA1")
+# there are several (to be exact 31) matching motifs (that just match the word GATA1):
+names(motifs)
+# we select one from the list of names (JASPAR is good, second best is HOCOMOCO):
+# motif_2 <- motifs[["Mmusculus-jaspar2018-Gata1-MA0035.1"]]
+# we visualize it (this is the motif of GATA1):
+# view_motifs(motif_2)
+# trying a different one just to see
+motif <- motifs[["Mmusculus-jaspar2018-Tal1::Gata1-MA0140.1"]]
+view_motifs(motif)
+# I like this one better so I will continue with this one.
+```
+
+# Scanning a set of sequences with the slower alternative because I'm using Windows
+
+## first the wrapper function
+
+```{r}
+findMotifInstances <- function(seqs, motif, keepMatchedSeq=FALSE, ...){
+  motif <- universalmotif::convert_motifs(motif, "TFBSTools-PWMatrix")
+  x <- suppressWarnings(TFBSTools::searchSeq(motif, subject=seqs))
+  peaks <- strsplit(gsub("-",":",names(seqs)), ":")
+  if(all(lengths(peaks)==3)){ # convert relative coordinates to absolute
+    chrs <- sapply(peaks,FUN=function(x) x[1])
+    offsets <- sapply(peaks,FUN=function(x) as.integer(x[2]))-1L
+    i <- rep(seq_along(x),lengths(x))
+    return(GRanges(chrs[i], 
+                   IRanges(offsets[i]+as.integer(unlist(lapply(x, start))),
+                           offsets[i]+as.integer(unlist(lapply(x, end)))),
+                   strand=unlist(lapply(x, strand)),
+                   score=as.numeric(unlist(lapply(x, FUN=function(x) score(x))))
+                   ))
+  }
+  x <- as(x, "GRanges")
+  score(x) <- x$absScore
+  keepFields <- c("score","relScore")
+  if(keepMatchedSeq) keepFields <- c(keepFields, "siteSeqs")
+  mcols(x) <- mcols(x)[,intersect(colnames(mcols(x)), keepFields)]
+  x
+}
+```
+
+## Then get the motif instances
+
+```{r}
+motif_instances <- findMotifInstances(peak_seqs, motif, mc.cores=2) # running with 2 threads
+```
+
+# Answering the questions
+## Of all the peaks, what proportion contains a motif for the factor?
+
+```{r}
+# all the peaks:
+length(peaks)
+# peaks with motif
+length(motif_instances)
+# why does the following give me a smaller number than length(motif_instances)? shouldn't it be the same?
+sum(overlapsAny(peaks, motif_instances))
+percentage <- (sum(overlapsAny(peaks, motif_instances)))/length(peaks)*100
+percentage
+```
+Of  the `r length(peaks)` peaks, `r sum(overlapsAny(peaks, motif_instances))` (`r percentage`%) contain a motif.
+
+## Of all instances of that motif in the genome, what proportion is bound by the factor (i.e. has a peak)?
+
+```{r}
+mmusculus <- import(genome, "2bit", which = as(seqinfo(genome), "GenomicRanges"))
+motif_instances_genome <- findMotifInstances(mmusculus, motif, mc.cores=2)
+length(motif_instances_genome)
+```
+
+```{r}
+motif_with_peaks = overlapsAny(motif_instances_genome, peaks)
+sum(motif_with_peaks)
+percentage2 <- sum(motif_with_peaks)/length(motif_instances_genome)*100
+percentage2
+```
+
+Of the `r length(motif_instances_genome)` motif instances, `r sum(motif_with_peaks)` (`r percentage2`%) overlap a peak.
