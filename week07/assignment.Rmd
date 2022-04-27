@@ -1,0 +1,123 @@
+---
+title: "Assignment week 7"
+author: "Sarah Eiben"
+date: '2022-04-11'
+output: html_document
+---
+
+```{r, eval=FALSE}
+install.packages("magick")
+```
+
+
+```{r}
+suppressPackageStartupMessages({
+  library(epiwraps)
+  library(AnnotationHub)
+  library(MotifDb)
+  library(memes)
+  library(universalmotif)
+  library(ensembldb)
+  library(ggplot2)
+  library(magick)
+})
+ah <- AnnotationHub(localHub=TRUE)
+ensdb <- ah[["AH89211"]] #mouse ensembldb object
+```
+
+## Download the data
+
+IMPORTANT: If you download a binary object you need to specify that it is binary!
+
+```{r, eval=FALSE}
+# second name is where we save it
+download.file("https://ethz-ins.org/content/w7/atac.chr19.bam", "atac.chr19.bam", mode = "wb")
+download.file("https://ethz-ins.org/content/w7/atac.chr19.bam.bai", "atac.chr19.bam.bai", mode = "wb")
+# if you're on a slow computer, you might also want to download the tracks that we're generating below:
+tracks <- c("full_cuts.bw", "NF_cov.bw", "NF_cuts.bw", "mono_cov.bw", "mono_cuts.bw")
+for(f in tracks){
+  download.file(paste0("https://ethz-ins.org/content/w7/",f), f)
+}
+```
+
+## Preparing tracks
+
+We want to know where the fragment begins and ends --> we ask how many fragments begin or and at a certain position.
+
+```{r}
+bam <- "atac.chr19.bam"
+fragSizesDist(bam)
+
+# create a track using all fragments, computing the coverage at each position (and force Ensembl naming)
+# binwidth = 1 is so we look at every single position
+bam2bw(bam, output_bw = "full_cov.bw", paired=TRUE, binWidth=1L, forceSeqlevelsStyle = "Ensembl")
+# create a track using all fragments, but computing the number of cuts/insertion sites at each position
+# important to use type ="ends" --> both ends of the fragment are considered
+bam2bw(bam, output_bw = "full_cuts.bw", paired=TRUE, binWidth=1L, type="ends", forceSeqlevelsStyle = "Ensembl")
+# create a track using only nucleosome-free fragments, computing coverage by defining a fragment length
+bam2bw(bam, output_bw = "NF_cov.bw", paired=TRUE, binWidth=1L, minFragLength=30, 
+       maxFragLength=115, forceSeqlevelsStyle = "Ensembl")
+# create a track using only nucleosome-free fragments, computing cuts by defining a fragment length
+bam2bw(bam, output_bw = "NF_cuts.bw", paired=TRUE, binWidth=1L, minFragLength=30,
+       maxFragLength=115, type="ends", forceSeqlevelsStyle = "Ensembl")
+# create a track using only mono-nucleosome fragments, computing coverage
+bam2bw(bam, output_bw = "mono_cov.bw", paired=TRUE, binWidth=1L, minFragLength=130,
+       maxFragLength=220, forceSeqlevelsStyle = "Ensembl")
+# create a track using only mono-nucleosome fragments, computing cuts
+bam2bw(bam, output_bw = "mono_cuts.bw", paired=TRUE, binWidth=1L, minFragLength=130,
+       maxFragLength=220, type="ends", forceSeqlevelsStyle = "Ensembl")
+```
+
+# Plotting the profile of insertions (i.e. 'cuts') for, respectively, nucleosome-free and nucleosome-containing fragments, around the high-confidence motifs of the factor GCR
+
+### Obtaining the sites with a GCR motif
+
+```{r}
+# get GCR sites (gives you a matrix)
+motif_GCR <- query(MotifDb, c("GCR","Mus"))[[1]]
+genome <- ah[["AH68356"]]
+# get the sequence for chr19:
+chr19 <- GRanges("19", IRanges(1L,seqlengths(genome)["19"]))
+chr19 <- setNames(getSeq(genome, chr19), "19")
+# This would be the way if we had a strongly bound motif
+# motif_instances_GCR <- findMotifInstances(chr19, motif_GCR)
+# keep only motifs with a high score --> using motifs with very high score and thus high possibility of CTCF actually binding there
+# strong_motives_GCR <- motif_instances_GCR[motif_instances_GCR$score>15]
+# hist(strong_motives_GCR$score)
+# Since most factors bind only a small minority of their motifs, you'll most likely have to restrict the motif instances to those that are in accessible regions, e.g.
+motifs_GCR <- findMotifInstances(chr19, motif_GCR)
+# findMotifInstances gives you a GRanges object, which we need for the overlapsAny!
+accessible_regions <- callPeaks("atac.chr19.bam")
+seqlevelsStyle(accessible_regions) <- "Ensembl"
+accessible_motifs <- motifs_GCR[overlapsAny(motifs_GCR, accessible_regions)]
+hist(accessible_motifs$score)
+```
+
+### Plotting signal around the motif occurences
+
+```{r}
+# we prepare the list of tracks
+tracks <- c("Full cuts"="full_cuts.bw", "NF coverage"="NF_cov.bw", "NF cuts"="NF_cuts.bw",
+            "Mono cov"="mono_cov.bw", "Mono cuts"="mono_cuts.bw")
+# extract signals around the motif occurences
+# we zoom in to 500bp around the motif centers, in windows of 5bp
+sm_GCR <- signal2Matrix(tracks, accessible_motifs, w=5, extend=500)
+# plot the signals:
+plotEnrichedHeatmaps(sm_GCR, trim=0.95)
+# --> nucleosome free (NF) coverage
+# in the plot of the cuts we see that it binds to the ends
+# we renormalize using border backgrounds
+smb_GCR <- renormalizeBorders(sm_GCR)
+plotEnrichedHeatmaps(smb_GCR, trim=0.95)
+# now you can see the results much more clearly
+# the light/colorful parts in the cuts are where there is a cut
+```
+
+Estimated time of completion: 1h
+The result does not look like I expected, there is no dip in the peak at the center...
+My heatmap also doesn't look very nice, even with the Magick.
+
+```{r}
+sessionInfo()
+```
+
