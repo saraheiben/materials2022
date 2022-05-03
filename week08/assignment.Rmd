@@ -1,0 +1,17 @@
+---
+title: "Assignment Week 8"
+author: "Sarah Eiben"
+date: '2022-04-30'
+output: html_document
+---
+
+# What is the topic?
+As I am not working and have never worked in research and I am not very familiar with the field (all I know is from the course), I would like to resort to one of the topics you suggested.
+I am interested in the first topic: Comparison of the bindings of different CREB family members and cofactors (in K562 cell line) and was wondering if it might be possible to compare normal binding to binding in a disease/pathological process that is affected by CREB binding like for example leukemia.
+# What data will you be using?
+Data for the comparison of different CREB family members and cofactors should be available from encode, for the disease I am not sure how to look for it/find it exactly.
+# What are the analyses you wish to reproduce, or the questions you wish to answer?
+How do different CREB family members and cofactors bind in the K562 cell line (to CBP, p300)?
+How does this differ in a K562 cell with leukemia?
+
+As to the group building I would like to do a group with Michelle and Deni but we thought we could each suggest a topic independently and then decide together which suggestion makes most sense.
