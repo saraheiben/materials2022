@@ -1,0 +1,146 @@
+---
+title: "assignmnent week 10"
+author: "Sarah Eiben"
+date: '2022-05-17'
+output: html_document
+---
+
+I ran into some errors that I didn't know how to fix and I ran out of time, so I'll just upload it as it is. Maybe you can tell me what I did wrong. I also can't knit it.
+
+
+```{r}
+suppressPackageStartupMessages({
+  library(GenomicRanges)
+  library(epiwraps)
+  library(ggplot2)
+  library(rGREAT)
+  library(AnnotationHub)
+  library(ensembldb)
+  library(bsseq)
+  library(BiocParallel)
+  library(edgeR)
+  library(DMRcate)
+})
+
+set.seed(40)
+```
+
+# Part 1 of the assignment: DMR plotting
+
+### bsseq object and raw data heatmap
+Bisulfate sequencing data = bsseq
+```{r}
+bsseqEx <- readRDS("C:/Users/Sarah.HOME/OneDrive/ETH/Master/Neuro FS22/Bioinformatic approaches to regulatory genomics/Assignments/Week 10/bsseqOb.rds")
+bsseqEx
+# tells me that it has not been smoothed
+sampleNames(bsseqEx)
+# Here I see that the data is from the adult liver and from forebrain cells
+methRanges<- bsseq::getMeth(bsseqEx, regions=dmrRanges, type="raw", what="perRegion")
+# if we want the methylated fractions in form of a GRanges object
+# Liver Rep 1
+promoterRegionslrep1 <- GRanges(seqnames=seqnames(dmrRanges),
+                                 ranges=ranges(dmrRanges),
+                                 strand=strand(dmrRanges),
+                                 score=methRanges[,"liver_adult_rep1.bed"])
+promoterRegionslrep1
+
+# liver Rep 2
+promoterRegionslrep2 <- GRanges(seqnames=seqnames(dmrRanges),
+                                 ranges=ranges(dmrRanges),
+                                 strand=strand(dmrRanges),
+                                 score=methRanges[,"liver_adult_rep2.bed"])
+
+# forbrain Rep 1
+promoterRegionsfbrep1 <- GRanges(seqnames=seqnames(dmrRanges),
+                                 ranges=ranges(dmrRanges),
+                                 strand=strand(dmrRanges),
+                                 score=methRanges[,"E13_5_rep1.bed"])
+
+# forbrain Rep 2
+promoterRegionsfbrep2 <- GRanges(seqnames=seqnames(dmrRanges),
+                                 ranges=ranges(dmrRanges),
+                                 strand=strand(dmrRanges),
+                                 score=methRanges[,"E13_5_rep1.bed"])
+
+tracks <- c("Adult liver 1"=promoterRegionslrep1,
+               "Adult liver 2"=promoterRegionslrep2,
+               "Forbrain 1"=promoterRegionsfbrep1,
+               "Forbrain 2"=promoterRegionsfbrep2)
+
+mlraw <- signal2Matrix(tracks, dmrRanges, extend=1000, w=20, type="scale", smooth=FALSE)
+
+plotEnrichedHeatmaps(mlraw, scale_title="Proportion\nmethylated", axis_name = c("TSS","TES"), colors = c("white","red"))
+```
+This heatmap turned out to not really show anything, I don't know what I did wrong.
+
+### smoothing
+Smoothing is done separately for each sample, only using the data where the coverage (for that sample) is non-zero. This estimates a genome-wide methylation profile, which is then evaluated in all CpGs in the BSseq object. As a result, after smoothing, every CpG in the object has an estimated methylation value. This is very nice for the situation where you want to compare a single CpG across multiple samples, but one or two of the samples have zero coverage by chance. But note that these smoothed methylation profiles makes less sense in the parts of the genome where there are no covered CpGs nearby. We fix this by removing these CpGs after smoothing, see below. (from the bsseq vignette)
+Takes a while to smooth this! After doing this we will have all the data in rough and in smooth form.
+```{r, eval=FALSE}
+bsseqExSm <- BSmooth(BSseq=bsseqEx, 
+                   BPPARAM=SnowParam(workers = 4), 
+                   verbose = TRUE)
+
+getMeth(bsseqExSm, regions=promoterRegions, type="smooth", what="perRegion")
+```
+
+
+### smoothed data heatmap
+
+```{r}
+# annotate
+pData(bsseqExSm) <- data.frame(replicate=c(1,2,1,2),
+                             tissue=c("embryonic forebrain", "embryonic forebrain", "liver", "liver"),
+                             row.names=colnames(bsseqExSm))
+colnames(bsseqExSm) <- rownames(pData(bsseqExSm))
+sampleNames(bsseqExSm) <- rownames(pData(bsseqExSm))
+
+tissueSm <- factor(pData(bsseqExSm)$tissue)
+designSm <- model.matrix(~tissueSm) # design matrix --> form to represent you data
+
+# adapt for methylation data
+methdesignSm <- modelMatrixMeth(design)
+
+seqAnnotSm <- sequencing.annotate(bsseqExSm, methdesignSm, all.cov=TRUE, coef="tissueliver", fdr=0.4)
+# looks at if it is tissue from the liver tissue or not
+dmrcateResSm <- dmrcate(seqAnnotSm, C=2, min.cpgs = 10, pcutoff=0.01)
+
+dmrRangesSm <- extractRanges(dmrcateResSm, genome="mm10")
+dmrRangesSm
+
+mlsmooth <- signal2Matrix(tracks, dmrRangesSm, extend=1000, w=20, type="scale", smooth=TRUE)
+
+plotEnrichedHeatmaps(mlsmooth, scale_title="Proportion\nmethylated", axis_name = c("TSS","TES"), colors = c("white","red"))
+```
+
+
+# Part 2 of the assignment: enrichment analysis
+
+```{r}
+suppressPackageStartupMessages({
+  library(rGREAT)
+})
+```
+
+## Enrichment analysis
+
+I am working with the smooth data and I am trying to find out what the top biological processes in the differentially methylated regions are.
+
+```{r}
+# we make 4 clusters out of the smooth data sets
+cl <- clusterSignalMatrices(mlraw, k=4)
+
+plotEnrichedHeatmaps(mlsmooth, row_split=cl, scale_title="Proportion\nmethylated", axis_name = c("start","end"), colors = c("white","red"))
+# we first split the regions by cluster:
+split_regions <- split(dmrRangesSm)
+
+# to get only the regions in cluster 3 do split_regions[["3"]]
+# we send the data to the GREAT server to run an enrichment analysis
+# IMPORTANT: when you submit a job to GREAT you need to submit a set of regions, a GRanges object, but you also need to submit a background. You are always comparing the elements in your list of regions to other elements, so we are comparing the regions in cluster 4 with respect to all our other regions.
+# like for example comparing letters in french language to letters in other languages. It depends whether you compare it to roman languages or other languages.
+# send my data to the server
+job <- submitGreatJob(split_regions[["4"]], dmRanges, species="mm10")
+# fetch data back
+res <- getEnrichmentTables(job)
+names(res)
+```
